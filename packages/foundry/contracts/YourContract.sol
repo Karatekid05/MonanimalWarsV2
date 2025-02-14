@@ -1,5 +1,5 @@
-//SPDX-License-Identifier: MIT
-pragma solidity >=0.8.0 <0.9.0;
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
 
 // Useful for debugging. Remove when deploying to a live network.
 import "forge-std/console.sol";
@@ -13,67 +13,213 @@ import "forge-std/console.sol";
  * @author BuidlGuidl
  */
 contract YourContract {
-    // State Variables
-    address public immutable owner;
-    string public greeting = "Building Unstoppable Apps!!!";
-    bool public premium = false;
-    uint256 public totalCounter = 0;
-    mapping(address => uint256) public userGreetingCounter;
+    // Constants
+    uint256 public constant MAX_HEALTH = 10;
+    uint256 public constant MIN_HEALTH = 0;
+    uint256 public constant TEAMS_COUNT = 6;
 
-    // Events: a way to emit log statements from smart contract that can be listened to by external parties
-    event GreetingChange(address indexed greetingSetter, string newGreeting, bool premium, uint256 value);
-
-    // Constructor: Called once on contract deployment
-    // Check packages/foundry/deploy/Deploy.s.sol
-    constructor(address _owner) {
-        owner = _owner;
+    struct Team {
+        string name; // Nome da equipe
+        uint256 health;
+        uint256 playerCount;
     }
 
-    // Modifier: used to define a set of rules that must be met before or after a function is executed
-    // Check the withdraw() function
-    modifier isOwner() {
-        // msg.sender: predefined variable that represents address of the account that called the current function
-        require(msg.sender == owner, "Not the Owner");
+    struct Player {
+        string username;
+        uint256 teamId;
+        bool exists;
+        uint256 damageDealt; // Total damage dealt by player
+        uint256 healingDone; // Total healing done by player
+    }
+
+    // Mappings
+    mapping(uint256 => Team) public teams; // teamId => Team
+    mapping(address => Player) public players; // player address => Player
+    mapping(string => bool) public usernameExists; // username => exists
+
+    // Events
+    event PlayerRegistered(address player, string username, uint256 teamId);
+    event TeamAttacked(
+        uint256 fromTeamId,
+        uint256 targetTeamId,
+        uint256 newHealth,
+        address attacker
+    );
+    event TeamHealed(uint256 teamId, uint256 newHealth, address healer);
+
+    // Adicionar endereço da carteira autorizada
+    address public gameOperator;
+    
+    // Modificador para funções que só a carteira backend pode chamar
+    modifier onlyOperator() {
+        require(msg.sender == gameOperator, "Only game operator can execute");
         _;
     }
 
-    /**
-     * Function that allows anyone to change the state variable "greeting" of the contract and increase the counters
-     *
-     * @param _newGreeting (string memory) - new greeting to save on the contract
-     */
-    function setGreeting(string memory _newGreeting) public payable {
-        // Print data to the anvil chain console. Remove when deploying to a live network.
+    constructor() {
+        gameOperator = msg.sender; // Quem faz deploy será o operador inicial
+        
+        // Initialize all teams with max health and names
+        string[TEAMS_COUNT] memory teamNames = [
+            "Dragons",
+            "Phoenix",
+            "Unicorns",
+            "Griffins",
+            "Krakens",
+            "Chimeras"
+        ];
+        
+        for(uint256 i = 0; i < TEAMS_COUNT; i++) {
+            teams[i] = Team({
+                name: teamNames[i],
+                health: MAX_HEALTH,
+                playerCount: 0
+            });
+        }
+    }
 
-        console.logString("Setting new greeting");
-        console.logString(_newGreeting);
+    // Função para mudar o operador se necessário
+    function setGameOperator(address newOperator) public {
+        require(msg.sender == gameOperator, "Only current operator can change");
+        gameOperator = newOperator;
+    }
 
-        greeting = _newGreeting;
-        totalCounter += 1;
-        userGreetingCounter[msg.sender] += 1;
+    // Modificar funções de ação para serem chamadas pelo operador
+    function registerPlayer(address player, string memory username) public onlyOperator {
+        require(!players[player].exists, "Player already registered");
+        require(!usernameExists[username], "Username already taken");
+        require(bytes(username).length > 0, "Username cannot be empty");
+        
+        uint256 selectedTeam = getTeamWithLeastPlayers();
+        
+        players[player] = Player({
+            username: username,
+            teamId: selectedTeam,
+            exists: true,
+            damageDealt: 0,
+            healingDone: 0
+        });
+        
+        teams[selectedTeam].playerCount++;
+        usernameExists[username] = true;
+        
+        emit PlayerRegistered(player, username, selectedTeam);
+    }
 
-        // msg.value: built-in global variable that represents the amount of ether sent with the transaction
-        if (msg.value > 0) {
-            premium = true;
-        } else {
-            premium = false;
+    function attackTeam(address player, uint256 targetTeamId) public onlyOperator {
+        require(players[player].exists, "Player not registered");
+        require(targetTeamId < TEAMS_COUNT, "Invalid team ID");
+        require(targetTeamId != players[player].teamId, "Cannot attack own team");
+        require(teams[targetTeamId].health > MIN_HEALTH, "Team already defeated");
+        
+        uint256 newHealth = teams[targetTeamId].health - 1;
+        teams[targetTeamId].health = newHealth;
+        
+        players[player].damageDealt += 1;
+        
+        emit TeamAttacked(players[player].teamId, targetTeamId, newHealth, player);
+    }
+
+    function healTeam(address player) public onlyOperator {
+        require(players[player].exists, "Player not registered");
+        uint256 teamId = players[player].teamId;
+        require(teams[teamId].health < MAX_HEALTH, "Team already at max health");
+        
+        uint256 newHealth = teams[teamId].health + 1;
+        teams[teamId].health = newHealth;
+        
+        players[player].healingDone += 1;
+        
+        emit TeamHealed(teamId, newHealth, player);
+    }
+
+    // Helper function to get team with least players
+    function getTeamWithLeastPlayers() internal view returns (uint256) {
+        uint256 minPlayers = type(uint256).max;
+        uint256 selectedTeam = 0;
+
+        for (uint256 i = 0; i < TEAMS_COUNT; i++) {
+            if (teams[i].playerCount < minPlayers) {
+                minPlayers = teams[i].playerCount;
+                selectedTeam = i;
+            }
         }
 
-        // emit: keyword used to trigger an event
-        emit GreetingChange(msg.sender, _newGreeting, msg.value > 0, msg.value);
+        return selectedTeam;
     }
 
-    /**
-     * Function that allows the owner to withdraw all the Ether in the contract
-     * The function can only be called by the owner of the contract as defined by the isOwner modifier
-     */
-    function withdraw() public isOwner {
-        (bool success,) = owner.call{ value: address(this).balance }("");
-        require(success, "Failed to send Ether");
+    // View functions
+    function getTeamHealth(uint256 teamId) public view returns (uint256) {
+        require(teamId < TEAMS_COUNT, "Invalid team ID");
+        return teams[teamId].health;
     }
 
-    /**
-     * Function that allows the contract to receive ETH
-     */
-    receive() external payable { }
+    function getPlayerTeam(address player) public view returns (uint256) {
+        require(players[player].exists, "Player not registered");
+        return players[player].teamId;
+    }
+
+    function getPlayerStats(
+        address player
+    ) public view returns (uint256 damage, uint256 healing) {
+        require(players[player].exists, "Player not registered");
+        return (players[player].damageDealt, players[player].healingDone);
+    }
+
+    function canAttack(uint256 targetTeamId) public view returns (bool) {
+        if (!players[msg.sender].exists) return false;
+        if (targetTeamId >= TEAMS_COUNT) return false;
+        if (targetTeamId == players[msg.sender].teamId) return false;
+        if (teams[targetTeamId].health <= MIN_HEALTH) return false;
+        return true;
+    }
+
+    function canHeal() public view returns (bool) {
+        if (!players[msg.sender].exists) return false;
+        uint256 teamId = players[msg.sender].teamId;
+        if (teams[teamId].health >= MAX_HEALTH) return false;
+        return true;
+    }
+
+    // Struct para retornar informações da equipe
+    struct TeamInfo {
+        uint256 teamId;
+        string name;
+        uint256 health;
+        uint256 playerCount;
+    }
+
+    // Nova função para obter informações de uma equipe específica
+    function getTeamInfo(uint256 teamId) public view returns (TeamInfo memory) {
+        require(teamId < TEAMS_COUNT, "Invalid team ID");
+        return
+            TeamInfo({
+                teamId: teamId,
+                name: teams[teamId].name,
+                health: teams[teamId].health,
+                playerCount: teams[teamId].playerCount
+            });
+    }
+
+    // Nova função para obter informações de todas as equipes
+    function getAllTeams() public view returns (TeamInfo[] memory) {
+        TeamInfo[] memory allTeams = new TeamInfo[](TEAMS_COUNT);
+
+        for (uint256 i = 0; i < TEAMS_COUNT; i++) {
+            allTeams[i] = TeamInfo({
+                teamId: i,
+                name: teams[i].name,
+                health: teams[i].health,
+                playerCount: teams[i].playerCount
+            });
+        }
+
+        return allTeams;
+    }
+
+    // Nova função para obter o nome da equipe
+    function getTeamName(uint256 teamId) public view returns (string memory) {
+        require(teamId < TEAMS_COUNT, "Invalid team ID");
+        return teams[teamId].name;
+    }
 }

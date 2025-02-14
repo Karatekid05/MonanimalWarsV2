@@ -28,7 +28,10 @@ export const monadDevnet = defineChain({
   },
 });
 
-const scaffoldConfig = {
+export * from "./scaffold.config";
+
+export const scaffoldConfig = {
+  targetNetwork: chains.foundry,
   // The networks on which your DApp is live
   targetNetworks: [chains.foundry], // change to monadDevnet when you want to go production like below
   // targetNetworks: [monadDevnet],

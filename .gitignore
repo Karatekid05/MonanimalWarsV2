@@ -20,4 +20,5 @@ node_modules
 .idea
 
 # cli
-dist
+distpackages/nextjs/.env.local
+packages/foundry/.env
